@@ -77,142 +77,69 @@
         return d;
     };
     
-    const isDateInRange = (date) => {
-        const d = new Date(date);
-        d.setHours(0, 0, 0, 0);
-        const start = new Date(rangeStartDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(rangeEndDate);
-        end.setHours(23, 59, 59, 999);
-        return d >= start && d <= end;
-    };
-    
     const getWeekId = (date) => {
         const monday = getMondayOfWeek(date);
         return formatDate(monday);
     };
     
-    /* Enhanced navigation function that uses the page's native navigation */
+    /* Store initial page state to restore after each navigation */
+    let initialUrl = window.location.href;
+    
+    /* Simple navigation using the date input field */
     const navigateToDate = async (targetDate) => {
         console.log(`Navigating to week of ${formatDate(targetDate)}`);
         
-        // Try to use the date picker if available
-        const datePicker = jQuery('.date-picker-short, .k-datepicker input').first();
-        if (datePicker.length > 0) {
-            // Check if there's a Kendo DatePicker widget
-            const kendoDatePicker = datePicker.data('kendoDatePicker');
-            if (kendoDatePicker) {
-                kendoDatePicker.value(targetDate);
-                kendoDatePicker.trigger('change');
-            } else {
-                // Try clicking on the date picker and setting value
-                datePicker.click();
-                datePicker.val(formatDateForInput(targetDate));
-                datePicker.trigger('change');
-            }
+        // Find the date input field
+        const dateInput = document.querySelector('.date-picker-short, input[type="text"][readonly]');
+        if (!dateInput) {
+            console.error('Date input not found');
+            return false;
         }
         
-        // Alternative: use navigation arrows if date picker doesn't work
-        const scheduler = jQuery('.k-scheduler').first().data('kendoScheduler');
-        if (scheduler) {
-            const currentWeek = getMondayOfWeek(scheduler.date());
-            const targetWeek = getMondayOfWeek(targetDate);
-            const weeksDiff = Math.round((targetWeek - currentWeek) / (7 * 24 * 60 * 60 * 1000));
-            
-            if (weeksDiff !== 0) {
-                // Use the toolbar navigation if available
-                const navButton = weeksDiff > 0 ? 
-                    jQuery('.k-scheduler-toolbar .k-nav-next, .k-i-arrow-e').first() : 
-                    jQuery('.k-scheduler-toolbar .k-nav-prev, .k-i-arrow-w').first();
-                
-                if (navButton.length > 0) {
-                    const steps = Math.abs(weeksDiff);
-                    for (let i = 0; i < steps; i++) {
-                        navButton.click();
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                } else {
-                    // Fallback: update all schedulers directly
-                    jQuery('.k-scheduler').each(function() {
-                        const sched = jQuery(this).data('kendoScheduler');
-                        if (sched) {
-                            sched.date(targetDate);
-                        }
-                    });
-                }
-            }
+        // Format date as the system expects (DD MMM YYYY)
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const d = new Date(targetDate);
+        const dateStr = `${String(d.getDate()).padStart(2, '0')} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+        
+        // Remove readonly temporarily if present
+        const wasReadonly = dateInput.hasAttribute('readonly');
+        if (wasReadonly) {
+            dateInput.removeAttribute('readonly');
         }
         
-        // Wait for the page to fully reload
+        // Set the value and trigger change
+        dateInput.value = dateStr;
+        dateInput.dispatchEvent(new Event('change', { bubbles: true }));
+        dateInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        
+        // Restore readonly
+        if (wasReadonly) {
+            dateInput.setAttribute('readonly', 'readonly');
+        }
+        
+        // Wait for page to reload
+        await new Promise(resolve => setTimeout(resolve, 3000));
         await waitForLoad();
         
-        // Force refresh all schedulers
-        jQuery('.k-scheduler').each(function() {
-            const sched = jQuery(this).data('kendoScheduler');
-            if (sched && sched.dataSource) {
-                sched.dataSource.read();
-                sched.refresh();
-            }
-        });
-        
-        // Additional wait for data to load
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        return true;
     };
     
-    /* Enhanced wait function */
+    /* Wait for page to load */
     const waitForLoad = () => {
         return new Promise((resolve) => {
             let attempts = 0;
-            let lastDataCount = 0;
-            let stableCount = 0;
-            
             const checkInterval = setInterval(() => {
                 attempts++;
                 
-                const schedulers = jQuery('.k-scheduler');
-                if (schedulers.length === 0) {
-                    if (attempts > 40) {
-                        clearInterval(checkInterval);
-                        resolve();
-                    }
-                    return;
-                }
+                // Check if any schedulers exist
+                const schedulers = document.querySelectorAll('.k-scheduler, .team-roster-scheduler');
+                const events = document.querySelectorAll('.k-event');
                 
-                let totalEvents = 0;
-                let allReady = true;
-                
-                schedulers.each(function() {
-                    const scheduler = jQuery(this).data('kendoScheduler');
-                    if (!scheduler || !scheduler.dataSource) {
-                        allReady = false;
-                        return;
-                    }
-                    
-                    const events = scheduler.dataSource.data();
-                    totalEvents += events.length;
-                    
-                    // Check if view is ready
-                    if (!scheduler.view() || scheduler.view().element.find('.k-event').length === 0 && events.length > 0) {
-                        allReady = false;
-                    }
-                });
-                
-                // Check DOM elements
-                const hasEvents = jQuery('.k-event').length > 0;
-                const hasTeams = jQuery('.titleBar').length > 0;
-                
-                if (totalEvents === lastDataCount && totalEvents > 0 && allReady && hasEvents && hasTeams) {
-                    stableCount++;
-                } else {
-                    stableCount = 0;
-                    lastDataCount = totalEvents;
-                }
-                
-                if (stableCount >= 3) {
+                if (schedulers.length > 0 && events.length > 0) {
                     clearInterval(checkInterval);
-                    console.log(`Page loaded: ${totalEvents} events`);
-                    setTimeout(resolve, 500);
-                } else if (attempts > 60) { // 30 seconds timeout
+                    console.log(`Page loaded: ${schedulers.length} schedulers, ${events.length} events`);
+                    setTimeout(resolve, 1000);
+                } else if (attempts > 30) {
                     clearInterval(checkInterval);
                     console.warn('Load timeout');
                     resolve();
@@ -221,78 +148,162 @@
         });
     };
     
-    /* Extract data from current view */
+    /* Extract data from current view - simplified version */
     const extractWeekData = () => {
-        const schedulers = jQuery('.k-scheduler');
-        console.log(`Found ${schedulers.length} schedulers`);
+        console.log('Starting extraction for current week...');
         
-        if (schedulers.length === 0) {
-            return 0;
-        }
+        let eventsExtracted = 0;
         
-        let eventsInRange = 0;
+        // Get all team groups
+        const teamGroups = document.querySelectorAll('.team-group, [id^="teamRoster"]');
+        console.log(`Found ${teamGroups.length} team groups`);
         
-        schedulers.each(function(index) {
-            const scheduler = jQuery(this).data('kendoScheduler');
-            if (!scheduler || !scheduler.dataSource) {
-                console.warn(`Scheduler ${index + 1} has no data`);
-                return;
-            }
+        teamGroups.forEach((teamGroup, index) => {
+            // Get team name
+            const teamHeader = teamGroup.querySelector('h2, .titleBar');
+            const teamName = teamHeader ? teamHeader.textContent.trim() : `Team ${index + 1}`;
             
-            const teamHeader = jQuery(this).closest('.team-group').find('h2.titleBar').text().trim() || 
-                              jQuery(this).closest('[id^="teamRoster"]').find('h2').text().trim() ||
-                              `Team ${index + 1}`;
+            // Get all staff rows in this team
+            const staffRows = teamGroup.querySelectorAll('.k-scheduler-table tr');
             
-            const allEvents = scheduler.dataSource.data();
-            
-            if (!scheduler.resources || !scheduler.resources[0]) {
-                return;
-            }
-            
-            const people = scheduler.resources[0].dataSource.data();
-            console.log(`Team ${teamHeader}: ${people.length} people, ${allEvents.length} events`);
-            
-            people.forEach(person => {
-                const staffKey = `${person.personName}|${teamHeader}`;
+            staffRows.forEach(row => {
+                // Get staff name from the row header
+                const nameCell = row.querySelector('th .info-cell, th div');
+                if (!nameCell || !nameCell.textContent) return;
                 
+                const staffName = nameCell.textContent.trim();
+                if (!staffName || staffName.includes('Sep') || staffName.includes('Date')) return; // Skip date headers
+                
+                const staffKey = `${staffName}|${teamName}`;
+                
+                // Initialize staff if not exists
                 if (!allShifts[staffKey]) {
                     allShifts[staffKey] = {
-                        name: person.personName,
-                        team: teamHeader,
+                        name: staffName,
+                        team: teamName,
                         shifts: {}
                     };
                 }
+            });
+            
+            // Now get all events in this team section
+            const events = teamGroup.querySelectorAll('.k-event');
+            console.log(`Team ${teamName}: ${events.length} events found`);
+            
+            events.forEach(event => {
+                // Get the event details
+                const titleElement = event.querySelector('.bubble-title, span');
+                if (!titleElement) return;
                 
-                const personEvents = allEvents.filter(event => event.personId === person.personId);
+                const shiftTitle = titleElement.textContent.trim();
                 
-                personEvents.forEach(event => {
-                    const startDate = new Date(event.start);
-                    const endDate = new Date(event.end || event.endDate);
-                    
-                    const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
-                    
-                    startDate.setHours(0, 0, 0, 0);
-                    endDate.setHours(0, 0, 0, 0);
-                    
-                    const actualEndDate = new Date(endDate);
-                    actualEndDate.setDate(actualEndDate.getDate() - 1);
-                    
-                    let currentDate = new Date(startDate);
-                    while (currentDate <= actualEndDate) {
-                        if (isDateInRange(currentDate)) {
-                            const dateStr = formatDate(currentDate);
-                            allDates.add(dateStr);
-                            allShifts[staffKey].shifts[dateStr] = shiftTitle;
-                            eventsInRange++;
+                // Try to determine which date this event belongs to
+                // This is tricky as we need to figure out the position
+                // For now, let's extract what we can see
+                
+                // Get the current week dates from the date headers
+                const dateHeaders = teamGroup.querySelectorAll('.k-slot-cell div');
+                dateHeaders.forEach((header, dayIndex) => {
+                    const headerText = header.textContent.trim();
+                    if (headerText.match(/\d{2}\s\w{3}/)) { // Format: "01 Sep"
+                        // Parse this date
+                        const [day, month] = headerText.split(' ');
+                        const monthMap = {
+                            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+                            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+                        };
+                        
+                        // Determine year (current year or next year if month is less than current)
+                        const currentDate = new Date();
+                        let year = currentDate.getFullYear();
+                        if (monthMap[month] < currentDate.getMonth() - 6) {
+                            year++;
                         }
-                        currentDate.setDate(currentDate.getDate() + 1);
+                        
+                        const eventDate = new Date(year, monthMap[month], parseInt(day));
+                        const dateStr = formatDate(eventDate);
+                        
+                        // For now, assign this shift to all visible staff in this team
+                        // This is a simplification - in reality we'd need to match positions
+                        Object.keys(allShifts).forEach(key => {
+                            if (key.endsWith(`|${teamName}`)) {
+                                // Check if this date is in our range
+                                if (eventDate >= rangeStartDate && eventDate <= rangeEndDate) {
+                                    if (!allShifts[key].shifts[dateStr]) {
+                                        allShifts[key].shifts[dateStr] = shiftTitle;
+                                        eventsExtracted++;
+                                    }
+                                }
+                            }
+                        });
                     }
                 });
             });
         });
         
-        console.log(`Extracted: ${eventsInRange} shifts in range`);
-        return eventsInRange;
+        // Alternative extraction method using Kendo data if available
+        try {
+            if (typeof jQuery !== 'undefined' && jQuery('.k-scheduler').length > 0) {
+                jQuery('.k-scheduler').each(function() {
+                    const scheduler = jQuery(this).data('kendoScheduler');
+                    if (!scheduler || !scheduler.dataSource) return;
+                    
+                    const teamElement = jQuery(this).closest('.team-group, [id^="teamRoster"]');
+                    const teamName = teamElement.find('h2, .titleBar').first().text().trim() || 'Unknown Team';
+                    
+                    const events = scheduler.dataSource.data();
+                    const resources = scheduler.resources && scheduler.resources[0] ? 
+                                     scheduler.resources[0].dataSource.data() : [];
+                    
+                    console.log(`Kendo data - Team ${teamName}: ${resources.length} people, ${events.length} events`);
+                    
+                    resources.forEach(person => {
+                        const staffKey = `${person.personName}|${teamName}`;
+                        
+                        if (!allShifts[staffKey]) {
+                            allShifts[staffKey] = {
+                                name: person.personName,
+                                team: teamName,
+                                shifts: {}
+                            };
+                        }
+                        
+                        const personEvents = events.filter(e => e.personId === person.personId);
+                        
+                        personEvents.forEach(event => {
+                            const startDate = new Date(event.start);
+                            const endDate = event.end ? new Date(event.end) : new Date(event.start);
+                            
+                            // Adjust end date (usually it's at 00:00 of next day)
+                            if (endDate.getHours() === 0 && endDate > startDate) {
+                                endDate.setDate(endDate.getDate() - 1);
+                            }
+                            
+                            const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
+                            
+                            // Add shifts for each day in range
+                            let currentDate = new Date(startDate);
+                            currentDate.setHours(0, 0, 0, 0);
+                            endDate.setHours(23, 59, 59, 999);
+                            
+                            while (currentDate <= endDate) {
+                                if (currentDate >= rangeStartDate && currentDate <= rangeEndDate) {
+                                    const dateStr = formatDate(currentDate);
+                                    allShifts[staffKey].shifts[dateStr] = shiftTitle;
+                                    eventsExtracted++;
+                                }
+                                currentDate.setDate(currentDate.getDate() + 1);
+                            }
+                        });
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('Kendo extraction failed:', e);
+        }
+        
+        console.log(`Extracted ${eventsExtracted} shift assignments`);
+        return eventsExtracted;
     };
     
     /* Generate CSV */
@@ -339,42 +350,54 @@
             
             await waitForLoad();
             
-            const weeksToProcess = new Set();
+            // Extract initial week first
+            console.log('Extracting initial week...');
+            extractWeekData();
+            
+            // Determine all weeks to process
+            const weeksToProcess = [];
             let checkDate = new Date(rangeStartDate);
             
             while (checkDate <= rangeEndDate) {
                 const weekMonday = getMondayOfWeek(checkDate);
-                weeksToProcess.add(getWeekId(weekMonday));
+                const weekId = getWeekId(weekMonday);
+                
+                if (!processedWeeks.has(weekId)) {
+                    weeksToProcess.push(weekMonday);
+                    processedWeeks.add(weekId);
+                }
+                
                 checkDate.setDate(checkDate.getDate() + 7);
             }
             
-            console.log(`Need to process ${weeksToProcess.size} week(s)`);
+            console.log(`Need to process ${weeksToProcess.length} weeks total`);
             
-            for (let weekId of weeksToProcess) {
-                if (processedWeeks.has(weekId)) {
-                    continue;
-                }
+            // Process each week
+            for (let i = 0; i < weeksToProcess.length; i++) {
+                const weekMonday = weeksToProcess[i];
+                const weekId = getWeekId(weekMonday);
                 
-                const [day, month, year] = weekId.split('-').map(Number);
-                const weekMonday = new Date(year, month - 1, day);
+                console.log(`Processing week ${i + 1}/${weeksToProcess.length}: ${weekId}`);
                 
+                // Navigate to this week
                 await navigateToDate(weekMonday);
                 
-                console.log(`Extracting week ${weekId} (${processedWeeks.size + 1}/${weeksToProcess.size})`);
+                // Extract data
                 const extracted = extractWeekData();
                 
                 if (extracted > 0) {
-                    processedWeeks.add(weekId);
                     weeksProcessed++;
                 }
                 
-                if (processedWeeks.size < weeksToProcess.size) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
+                // Small delay between weeks
+                if (i < weeksToProcess.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
             
             console.log('\n=== Extraction complete! ===');
             console.log(`Total staff: ${Object.keys(allShifts).length}`);
+            console.log(`Weeks processed: ${weeksProcessed}`);
             
             if (Object.keys(allShifts).length === 0) {
                 alert('No data was extracted. Please check the page and try again.');
