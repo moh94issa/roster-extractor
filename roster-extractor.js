@@ -174,6 +174,9 @@
                     // Find events for this person
                     const personEvents = events.filter(e => e.personId === person.personId);
                     
+                    // Group events by date to handle multiple allocations
+                    const eventsByDate = {};
+                    
                     personEvents.forEach(event => {
                         const startDate = new Date(event.start);
                         const endDate = event.end ? new Date(event.end) : new Date(event.start);
@@ -184,6 +187,7 @@
                         }
                         
                         const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
+                        const isNonEffective = event.isNonEffective === true;
                         
                         // Process each day of the shift
                         let currentDate = new Date(startDate);
@@ -195,13 +199,43 @@
                             if (currentDate >= rangeStartDate && currentDate <= rangeEndDate) {
                                 const dateStr = formatDate(currentDate);
                                 
-                                // Only add if not already present (avoid duplicates)
-                                if (!allShifts[staffKey].shifts[dateStr]) {
-                                    allShifts[staffKey].shifts[dateStr] = shiftTitle;
-                                    shiftsExtracted++;
+                                // Initialize array for this date if needed
+                                if (!eventsByDate[dateStr]) {
+                                    eventsByDate[dateStr] = [];
                                 }
+                                
+                                // Add event info for this date
+                                eventsByDate[dateStr].push({
+                                    title: shiftTitle,
+                                    isNonEffective: isNonEffective
+                                });
                             }
                             currentDate.setDate(currentDate.getDate() + 1);
+                        }
+                    });
+                    
+                    // Now process each date and decide which shift(s) to keep
+                    Object.keys(eventsByDate).forEach(dateStr => {
+                        const dayEvents = eventsByDate[dateStr];
+                        
+                        // Check if there are any effective shifts for this day
+                        const effectiveShifts = dayEvents.filter(e => !e.isNonEffective);
+                        
+                        let selectedShift = '';
+                        
+                        if (effectiveShifts.length > 0) {
+                            // If there are effective shifts, use only those (prefer green)
+                            // If multiple effective shifts, concatenate them
+                            selectedShift = effectiveShifts.map(e => e.title).join(' / ');
+                        } else {
+                            // If only non-effective shifts, use them
+                            selectedShift = dayEvents.map(e => e.title).join(' / ');
+                        }
+                        
+                        // Only add if not already present (avoid duplicates from re-processing)
+                        if (!allShifts[staffKey].shifts[dateStr] && selectedShift) {
+                            allShifts[staffKey].shifts[dateStr] = selectedShift;
+                            shiftsExtracted++;
                         }
                     });
                 });
@@ -263,21 +297,29 @@
             
             // Calculate all Mondays we need to visit
             const weeksToProcess = [];
-            let checkDate = new Date(rangeStartDate);
+            const processedWeekIds = new Set();
             
-            // Include the end date by going one day past
-            const adjustedEndDate = new Date(rangeEndDate);
-            adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+            // Start from the Monday of the week containing the start date
+            let checkDate = getMondayOfWeek(rangeStartDate);
             
-            while (checkDate < adjustedEndDate) {
-                const monday = getMondayOfWeek(checkDate);
-                const mondayStr = formatDate(monday);
+            // Continue until we've covered the week containing the end date
+            // We need to include any week that contains ANY day in our range
+            while (checkDate <= rangeEndDate) {
+                const weekId = formatDate(checkDate);
                 
-                // Check if we already have this week
-                if (!weeksToProcess.some(w => formatDate(w) === mondayStr)) {
-                    weeksToProcess.push(monday);
+                // Check if this week contains any days in our range
+                const weekEnd = new Date(checkDate);
+                weekEnd.setDate(weekEnd.getDate() + 6);
+                
+                // If this week overlaps with our date range at all, include it
+                if (weekEnd >= rangeStartDate && checkDate <= rangeEndDate) {
+                    if (!processedWeekIds.has(weekId)) {
+                        weeksToProcess.push(new Date(checkDate));
+                        processedWeekIds.add(weekId);
+                    }
                 }
                 
+                // Move to next week
                 checkDate.setDate(checkDate.getDate() + 7);
             }
             
