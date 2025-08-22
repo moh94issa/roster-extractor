@@ -75,8 +75,37 @@
         return d;
     };
     
+    /* Get current displayed week from the page */
+    const getCurrentDisplayedWeek = () => {
+        const dateInput = document.querySelector('.date-picker-short, input[type="text"][readonly]');
+        if (!dateInput || !dateInput.value) return null;
+        
+        // Parse the date string (format: "03 Sep 2025")
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const parts = dateInput.value.split(' ');
+        if (parts.length !== 3) return null;
+        
+        const day = parseInt(parts[0]);
+        const month = monthNames.indexOf(parts[1]);
+        const year = parseInt(parts[2]);
+        
+        if (isNaN(day) || month === -1 || isNaN(year)) return null;
+        
+        const displayedDate = new Date(year, month, day);
+        return getMondayOfWeek(displayedDate);
+    };
+    
     /* Navigation using the date input */
     const navigateToDate = async (targetDate) => {
+        // Check if we're already on the target week
+        const currentWeek = getCurrentDisplayedWeek();
+        const targetWeek = getMondayOfWeek(targetDate);
+        
+        if (currentWeek && currentWeek.getTime() === targetWeek.getTime()) {
+            console.log(`Already on week of ${formatDate(targetDate)}, skipping navigation`);
+            return true;
+        }
+        
         console.log(`Navigating to week of ${formatDate(targetDate)}`);
         
         // Find the date input field
@@ -186,7 +215,8 @@
                             endDate.setDate(endDate.getDate() - 1);
                         }
                         
-                        const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
+                        // Use fullTitle if available, otherwise fall back to title
+                        const shiftTitle = (event.fullTitle || event.title || 'Shift').trim();
                         const isNonEffective = event.isNonEffective === true;
                         
                         // Process each day of the shift
@@ -331,7 +361,7 @@
                 
                 console.log(`\nProcessing week ${i + 1}/${weeksToProcess.length}: ${formatDate(weekMonday)}`);
                 
-                // Navigate to this week
+                // Navigate to this week (will skip if already there)
                 await navigateToDate(weekMonday);
                 
                 // Extract data
