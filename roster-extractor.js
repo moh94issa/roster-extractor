@@ -55,9 +55,7 @@
     
     /* Storage for all data */
     let allShifts = {};
-    let allDates = new Set();
     let weeksProcessed = 0;
-    let processedWeeks = new Set();
     
     /* Helper functions */
     const formatDate = (date) => {
@@ -77,15 +75,7 @@
         return d;
     };
     
-    const getWeekId = (date) => {
-        const monday = getMondayOfWeek(date);
-        return formatDate(monday);
-    };
-    
-    /* Store initial page state to restore after each navigation */
-    let initialUrl = window.location.href;
-    
-    /* Simple navigation using the date input field */
+    /* Navigation using the date input */
     const navigateToDate = async (targetDate) => {
         console.log(`Navigating to week of ${formatDate(targetDate)}`);
         
@@ -101,37 +91,34 @@
         const d = new Date(targetDate);
         const dateStr = `${String(d.getDate()).padStart(2, '0')} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
         
-        // Remove readonly temporarily if present
+        // Set the value
         const wasReadonly = dateInput.hasAttribute('readonly');
         if (wasReadonly) {
             dateInput.removeAttribute('readonly');
         }
         
-        // Set the value and trigger change
         dateInput.value = dateStr;
         dateInput.dispatchEvent(new Event('change', { bubbles: true }));
         dateInput.dispatchEvent(new Event('blur', { bubbles: true }));
         
-        // Restore readonly
         if (wasReadonly) {
             dateInput.setAttribute('readonly', 'readonly');
         }
         
-        // Wait for page to reload
+        // Wait for reload
         await new Promise(resolve => setTimeout(resolve, 3000));
         await waitForLoad();
         
         return true;
     };
     
-    /* Wait for page to load */
+    /* Wait for page load */
     const waitForLoad = () => {
         return new Promise((resolve) => {
             let attempts = 0;
             const checkInterval = setInterval(() => {
                 attempts++;
                 
-                // Check if any schedulers exist
                 const schedulers = document.querySelectorAll('.k-scheduler, .team-roster-scheduler');
                 const events = document.querySelectorAll('.k-event');
                 
@@ -148,166 +135,86 @@
         });
     };
     
-    /* Extract data from current view - simplified version */
+    /* Extract data from current week view */
     const extractWeekData = () => {
-        console.log('Starting extraction for current week...');
+        console.log('Extracting data for current week...');
+        let shiftsExtracted = 0;
         
-        let eventsExtracted = 0;
-        
-        // Get all team groups
-        const teamGroups = document.querySelectorAll('.team-group, [id^="teamRoster"]');
-        console.log(`Found ${teamGroups.length} team groups`);
-        
-        teamGroups.forEach((teamGroup, index) => {
-            // Get team name
-            const teamHeader = teamGroup.querySelector('h2, .titleBar');
-            const teamName = teamHeader ? teamHeader.textContent.trim() : `Team ${index + 1}`;
-            
-            // Get all staff rows in this team
-            const staffRows = teamGroup.querySelectorAll('.k-scheduler-table tr');
-            
-            staffRows.forEach(row => {
-                // Get staff name from the row header
-                const nameCell = row.querySelector('th .info-cell, th div');
-                if (!nameCell || !nameCell.textContent) return;
+        // Use jQuery/Kendo if available
+        if (typeof jQuery !== 'undefined' && jQuery('.k-scheduler').length > 0) {
+            jQuery('.k-scheduler').each(function() {
+                const scheduler = jQuery(this).data('kendoScheduler');
+                if (!scheduler || !scheduler.dataSource) return;
                 
-                const staffName = nameCell.textContent.trim();
-                if (!staffName || staffName.includes('Sep') || staffName.includes('Date')) return; // Skip date headers
+                // Get team name
+                const teamElement = jQuery(this).closest('.team-group, [id^="teamRoster"]');
+                const teamName = teamElement.find('h2, .titleBar').first().text().trim() || 'Unknown Team';
                 
-                const staffKey = `${staffName}|${teamName}`;
+                // Get resources (people)
+                if (!scheduler.resources || !scheduler.resources[0]) return;
+                const people = scheduler.resources[0].dataSource.data();
                 
-                // Initialize staff if not exists
-                if (!allShifts[staffKey]) {
-                    allShifts[staffKey] = {
-                        name: staffName,
-                        team: teamName,
-                        shifts: {}
-                    };
-                }
-            });
-            
-            // Now get all events in this team section
-            const events = teamGroup.querySelectorAll('.k-event');
-            console.log(`Team ${teamName}: ${events.length} events found`);
-            
-            events.forEach(event => {
-                // Get the event details
-                const titleElement = event.querySelector('.bubble-title, span');
-                if (!titleElement) return;
+                // Get all events
+                const events = scheduler.dataSource.data();
+                console.log(`Team ${teamName}: ${people.length} people, ${events.length} events`);
                 
-                const shiftTitle = titleElement.textContent.trim();
-                
-                // Try to determine which date this event belongs to
-                // This is tricky as we need to figure out the position
-                // For now, let's extract what we can see
-                
-                // Get the current week dates from the date headers
-                const dateHeaders = teamGroup.querySelectorAll('.k-slot-cell div');
-                dateHeaders.forEach((header, dayIndex) => {
-                    const headerText = header.textContent.trim();
-                    if (headerText.match(/\d{2}\s\w{3}/)) { // Format: "01 Sep"
-                        // Parse this date
-                        const [day, month] = headerText.split(' ');
-                        const monthMap = {
-                            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-                            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+                // Process each person
+                people.forEach(person => {
+                    const staffKey = `${person.personName}|${teamName}`;
+                    
+                    // Initialize if needed
+                    if (!allShifts[staffKey]) {
+                        allShifts[staffKey] = {
+                            name: person.personName,
+                            team: teamName,
+                            shifts: {}
                         };
-                        
-                        // Determine year (current year or next year if month is less than current)
-                        const currentDate = new Date();
-                        let year = currentDate.getFullYear();
-                        if (monthMap[month] < currentDate.getMonth() - 6) {
-                            year++;
-                        }
-                        
-                        const eventDate = new Date(year, monthMap[month], parseInt(day));
-                        const dateStr = formatDate(eventDate);
-                        
-                        // For now, assign this shift to all visible staff in this team
-                        // This is a simplification - in reality we'd need to match positions
-                        Object.keys(allShifts).forEach(key => {
-                            if (key.endsWith(`|${teamName}`)) {
-                                // Check if this date is in our range
-                                if (eventDate >= rangeStartDate && eventDate <= rangeEndDate) {
-                                    if (!allShifts[key].shifts[dateStr]) {
-                                        allShifts[key].shifts[dateStr] = shiftTitle;
-                                        eventsExtracted++;
-                                    }
-                                }
-                            }
-                        });
                     }
-                });
-            });
-        });
-        
-        // Alternative extraction method using Kendo data if available
-        try {
-            if (typeof jQuery !== 'undefined' && jQuery('.k-scheduler').length > 0) {
-                jQuery('.k-scheduler').each(function() {
-                    const scheduler = jQuery(this).data('kendoScheduler');
-                    if (!scheduler || !scheduler.dataSource) return;
                     
-                    const teamElement = jQuery(this).closest('.team-group, [id^="teamRoster"]');
-                    const teamName = teamElement.find('h2, .titleBar').first().text().trim() || 'Unknown Team';
+                    // Find events for this person
+                    const personEvents = events.filter(e => e.personId === person.personId);
                     
-                    const events = scheduler.dataSource.data();
-                    const resources = scheduler.resources && scheduler.resources[0] ? 
-                                     scheduler.resources[0].dataSource.data() : [];
-                    
-                    console.log(`Kendo data - Team ${teamName}: ${resources.length} people, ${events.length} events`);
-                    
-                    resources.forEach(person => {
-                        const staffKey = `${person.personName}|${teamName}`;
+                    personEvents.forEach(event => {
+                        const startDate = new Date(event.start);
+                        const endDate = event.end ? new Date(event.end) : new Date(event.start);
                         
-                        if (!allShifts[staffKey]) {
-                            allShifts[staffKey] = {
-                                name: person.personName,
-                                team: teamName,
-                                shifts: {}
-                            };
+                        // Fix end date if it's at midnight (should be previous day)
+                        if (endDate.getHours() === 0 && endDate > startDate) {
+                            endDate.setDate(endDate.getDate() - 1);
                         }
                         
-                        const personEvents = events.filter(e => e.personId === person.personId);
+                        const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
                         
-                        personEvents.forEach(event => {
-                            const startDate = new Date(event.start);
-                            const endDate = event.end ? new Date(event.end) : new Date(event.start);
-                            
-                            // Adjust end date (usually it's at 00:00 of next day)
-                            if (endDate.getHours() === 0 && endDate > startDate) {
-                                endDate.setDate(endDate.getDate() - 1);
-                            }
-                            
-                            const shiftTitle = (event.title || event.fullTitle || 'Shift').trim();
-                            
-                            // Add shifts for each day in range
-                            let currentDate = new Date(startDate);
-                            currentDate.setHours(0, 0, 0, 0);
-                            endDate.setHours(23, 59, 59, 999);
-                            
-                            while (currentDate <= endDate) {
-                                if (currentDate >= rangeStartDate && currentDate <= rangeEndDate) {
-                                    const dateStr = formatDate(currentDate);
+                        // Process each day of the shift
+                        let currentDate = new Date(startDate);
+                        currentDate.setHours(0, 0, 0, 0);
+                        endDate.setHours(23, 59, 59, 999);
+                        
+                        while (currentDate <= endDate) {
+                            // Check if date is in requested range
+                            if (currentDate >= rangeStartDate && currentDate <= rangeEndDate) {
+                                const dateStr = formatDate(currentDate);
+                                
+                                // Only add if not already present (avoid duplicates)
+                                if (!allShifts[staffKey].shifts[dateStr]) {
                                     allShifts[staffKey].shifts[dateStr] = shiftTitle;
-                                    eventsExtracted++;
+                                    shiftsExtracted++;
                                 }
-                                currentDate.setDate(currentDate.getDate() + 1);
                             }
-                        });
+                            currentDate.setDate(currentDate.getDate() + 1);
+                        }
                     });
                 });
-            }
-        } catch (e) {
-            console.warn('Kendo extraction failed:', e);
+            });
         }
         
-        console.log(`Extracted ${eventsExtracted} shift assignments`);
-        return eventsExtracted;
+        console.log(`Extracted ${shiftsExtracted} new shift assignments`);
+        return shiftsExtracted;
     };
     
     /* Generate CSV */
     const generateCSV = () => {
+        // Create date range array
         const sortedDates = [];
         let currentDate = new Date(rangeStartDate);
         while (currentDate <= rangeEndDate) {
@@ -315,13 +222,16 @@
             currentDate.setDate(currentDate.getDate() + 1);
         }
         
+        // Build CSV header
         let csv = 'Name,Team,' + sortedDates.join(',') + '\n';
         
+        // Sort staff by team and name
         const sortedStaff = Object.values(allShifts).sort((a, b) => {
             if (a.team !== b.team) return a.team.localeCompare(b.team);
             return a.name.localeCompare(b.name);
         });
         
+        // Add data rows
         sortedStaff.forEach(staff => {
             const row = [`"${staff.name}"`, `"${staff.team}"`];
             sortedDates.forEach(date => {
@@ -330,6 +240,7 @@
             csv += row.join(',') + '\n';
         });
         
+        // Download
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -350,34 +261,33 @@
             
             await waitForLoad();
             
-            // Extract initial week first
-            console.log('Extracting initial week...');
-            extractWeekData();
-            
-            // Determine all weeks to process
+            // Calculate all Mondays we need to visit
             const weeksToProcess = [];
             let checkDate = new Date(rangeStartDate);
             
-            while (checkDate <= rangeEndDate) {
-                const weekMonday = getMondayOfWeek(checkDate);
-                const weekId = getWeekId(weekMonday);
+            // Include the end date by going one day past
+            const adjustedEndDate = new Date(rangeEndDate);
+            adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+            
+            while (checkDate < adjustedEndDate) {
+                const monday = getMondayOfWeek(checkDate);
+                const mondayStr = formatDate(monday);
                 
-                if (!processedWeeks.has(weekId)) {
-                    weeksToProcess.push(weekMonday);
-                    processedWeeks.add(weekId);
+                // Check if we already have this week
+                if (!weeksToProcess.some(w => formatDate(w) === mondayStr)) {
+                    weeksToProcess.push(monday);
                 }
                 
                 checkDate.setDate(checkDate.getDate() + 7);
             }
             
-            console.log(`Need to process ${weeksToProcess.length} weeks total`);
+            console.log(`Need to process ${weeksToProcess.length} weeks`);
             
             // Process each week
             for (let i = 0; i < weeksToProcess.length; i++) {
                 const weekMonday = weeksToProcess[i];
-                const weekId = getWeekId(weekMonday);
                 
-                console.log(`Processing week ${i + 1}/${weeksToProcess.length}: ${weekId}`);
+                console.log(`\nProcessing week ${i + 1}/${weeksToProcess.length}: ${formatDate(weekMonday)}`);
                 
                 // Navigate to this week
                 await navigateToDate(weekMonday);
