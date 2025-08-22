@@ -77,15 +77,25 @@
         return d;
     };
     
-    /* Extract time from Date object */
-    const extractTime = (dateObj) => {
-        if (!dateObj) return null;
-        const d = new Date(dateObj);
-        const hours = String(d.getHours()).padStart(2, '0');
-        const minutes = String(d.getMinutes()).padStart(2, '0');
-        // Return null if it's a whole day event (00:00)
-        if (hours === '00' && minutes === '00') return null;
-        return `${hours}:${minutes}`;
+    /* Extract time from event's time objects */
+    const extractTime = (timeObj) => {
+        if (!timeObj) return null;
+        
+        // Handle the timeObj which has Hours and Minutes properties
+        if (timeObj.Hours !== undefined && timeObj.Minutes !== undefined) {
+            const hours = String(timeObj.Hours).padStart(2, '0');
+            const minutes = String(timeObj.Minutes).padStart(2, '0');
+            return `${hours}:${minutes}`;
+        }
+        
+        // Fallback to Date object if needed
+        if (timeObj instanceof Date) {
+            const hours = String(timeObj.getHours()).padStart(2, '0');
+            const minutes = String(timeObj.getMinutes()).padStart(2, '0');
+            return `${hours}:${minutes}`;
+        }
+        
+        return null;
     };
     
     /* Create unique key for shift variant */
@@ -235,8 +245,8 @@
                         const shiftInfo = {
                             title: (event.title || 'Shift').trim(),
                             fullTitle: (event.fullTitle || event.title || 'Shift').trim(),
-                            startTime: extractTime(event.start),
-                            endTime: extractTime(event.end),
+                            startTime: extractTime(event.startTime),
+                            endTime: extractTime(event.endTime),
                             isNonEffective: event.isNonEffective === true,
                             eventId: event.id
                         };
