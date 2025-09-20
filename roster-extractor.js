@@ -298,9 +298,9 @@
                                 variantFrequency.set(key, (variantFrequency.get(key) || 0) + 1);
                             }
                         } else if (selectedShifts.length > 1) {
-                            // Multiple shifts on the same day - create a combined entry
-                            const combinedTitle = selectedShifts.map(s => s.title).join(' / ');
-                            const combinedFullTitle = selectedShifts.map(s => s.fullTitle).join(' / ');
+                            // Multiple shifts on the same day - create a combined entry with =/= separator
+                            const combinedTitle = selectedShifts.map(s => s.title).join(' =/= ');
+                            const combinedFullTitle = selectedShifts.map(s => s.fullTitle).join(' =/= ');
                             
                             const combinedShift = {
                                 title: combinedTitle,
@@ -333,6 +333,115 @@
         
         console.log(`Extracted ${shiftsExtracted} new shift assignments`);
         return shiftsExtracted;
+    };
+    
+    /* Detect and merge duplicate names after extraction */
+    const detectAndMergeDuplicates = () => {
+        // Group staff by name only (ignoring team)
+        const staffByName = {};
+        Object.entries(allShifts).forEach(([key, data]) => {
+            const name = data.name;
+            if (!staffByName[name]) {
+                staffByName[name] = [];
+            }
+            staffByName[name].push({ key, data });
+        });
+        
+        // Find duplicates
+        const duplicates = Object.entries(staffByName)
+            .filter(([name, entries]) => entries.length > 1);
+        
+        if (duplicates.length > 0) {
+            console.log(`Found ${duplicates.length} potential duplicate names`);
+            let mergeDecisions = [];
+            
+            duplicates.forEach(([name, entries]) => {
+                const teams = entries.map(e => e.data.team).join(', ');
+                const decision = confirm(
+                    `"${name}" appears in multiple teams: ${teams}\n\n` +
+                    `Click OK to merge as one person\n` +
+                    `Click Cancel to keep as separate people`
+                );
+                
+                if (decision) {
+                    mergeDecisions.push({ name, entries });
+                }
+            });
+            
+            // Process merge decisions
+            mergeDecisions.forEach(({ name, entries }) => {
+                console.log(`Merging entries for ${name}`);
+                
+                // Determine which team to use (the one with more people)
+                const teamCounts = {};
+                Object.values(allShifts).forEach(staff => {
+                    teamCounts[staff.team] = (teamCounts[staff.team] || 0) + 1;
+                });
+                
+                let primaryTeam = entries[0].data.team;
+                let maxCount = teamCounts[primaryTeam] || 0;
+                entries.forEach(entry => {
+                    const count = teamCounts[entry.data.team] || 0;
+                    if (count > maxCount) {
+                        maxCount = count;
+                        primaryTeam = entry.data.team;
+                    }
+                });
+                
+                // Merge shifts from all entries
+                const mergedShifts = {};
+                entries.forEach(entry => {
+                    Object.entries(entry.data.shifts).forEach(([date, shift]) => {
+                        if (!mergedShifts[date]) {
+                            mergedShifts[date] = shift;
+                        } else {
+                            // Combine shifts if different
+                            const existing = mergedShifts[date];
+                            const isDuplicate = (
+                                existing.title === shift.title &&
+                                existing.startTime === shift.startTime &&
+                                existing.endTime === shift.endTime
+                            );
+                            
+                            if (!isDuplicate) {
+                                // Concatenate with =/=
+                                mergedShifts[date] = {
+                                    title: existing.title + ' =/= ' + shift.title,
+                                    fullTitle: existing.fullTitle + ' =/= ' + shift.fullTitle,
+                                    startTime: existing.startTime || shift.startTime,
+                                    endTime: shift.endTime || existing.endTime,
+                                    isMultiple: true
+                                };
+                                
+                                // Track this new combined shift type
+                                const key = createShiftKey(mergedShifts[date]);
+                                if (!shiftTypes.has(key)) {
+                                    shiftTypes.set(key, {
+                                        title: mergedShifts[date].title,
+                                        fullTitle: mergedShifts[date].fullTitle,
+                                        startTime: mergedShifts[date].startTime,
+                                        endTime: mergedShifts[date].endTime
+                                    });
+                                }
+                                variantFrequency.set(key, (variantFrequency.get(key) || 0) + 1);
+                            }
+                        }
+                    });
+                });
+                
+                // Keep first entry with merged data
+                allShifts[entries[0].key] = {
+                    name: name,
+                    team: primaryTeam,
+                    shifts: mergedShifts
+                };
+                
+                // Remove other entries
+                for (let i = 1; i < entries.length; i++) {
+                    delete allShifts[entries[i].key];
+                }
+            });
+        }
     };
     
     /* Assign final titles to shift variants */
@@ -535,6 +644,9 @@
                 return;
             }
             
+            // Detect and handle duplicate names
+            detectAndMergeDuplicates();
+            
             // Assign final titles to variants
             const finalTitleMap = assignFinalTitles();
             
@@ -550,6 +662,8 @@
             
             if (Object.keys(allShifts).length > 0) {
                 if (confirm('Partial data extracted. Download it?')) {
+                    // Still check for duplicates even with partial data
+                    detectAndMergeDuplicates();
                     const finalTitleMap = assignFinalTitles();
                     const fileName = generateCSV(finalTitleMap);
                     generateShiftTypesJSON(finalTitleMap, fileName);
